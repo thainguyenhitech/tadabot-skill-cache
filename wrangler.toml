@@ -1,0 +1,15 @@
+name = "tadabot-skill-cache"
+main = "skill-cache.js"
+compatibility_date = "2024-01-01"
+
+# Environment variables (set via Cloudflare Dashboard → Worker → Settings → Variables):
+#   SUPABASE_URL      = https://qcwbqjyqjnloapsczayz.supabase.co
+#   SUPABASE_ANON_KEY = <anon key>
+#   PURGE_SECRET      = random auth token
+#   CF_API_TOKEN      = (optional) Cloudflare API token for zone purge
+#   CF_ZONE_ID        = (optional) Cloudflare zone ID
+
+# Custom domain (add after deploy):
+# [[routes]]
+# pattern = "skills-api.tadabot.io/*"
+# zone_name = "tadabot.io"
