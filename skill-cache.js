@@ -70,7 +70,8 @@ export default {
 async function handleSkills(request, env, url, ctx) {
   // Forward query params to Supabase REST API
   const supabaseUrl = `${env.SUPABASE_URL}/rest/v1/skill_catalog?${url.searchParams.toString()}`
-  const cacheKey = new Request(supabaseUrl, { method: 'GET' })
+  // Cache key must be same zone — use worker's own URL
+  const cacheKey = new Request(url.toString(), { method: 'GET' })
 
   // Try cache first
   const cache = caches.default
@@ -124,7 +125,8 @@ async function handleSkills(request, env, url, ctx) {
 
 async function handleCategories(request, env, ctx) {
   const supabaseUrl = `${env.SUPABASE_URL}/rest/v1/skill_categories?select=*&order=sort_order`
-  const cacheKey = new Request(supabaseUrl, { method: 'GET' })
+  // Cache key must be same zone — use worker's own URL
+  const cacheKey = new Request(request.url, { method: 'GET' })
 
   const cache = caches.default
   let response = await cache.match(cacheKey)
