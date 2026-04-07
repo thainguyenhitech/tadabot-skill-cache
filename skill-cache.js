@@ -31,33 +31,37 @@ const CORS_HEADERS = {
 
 export default {
   async fetch(request, env, ctx) {
-    // CORS preflight
-    if (request.method === 'OPTIONS') {
-      return new Response(null, { status: 204, headers: CORS_HEADERS })
+    try {
+      // CORS preflight
+      if (request.method === 'OPTIONS') {
+        return new Response(null, { status: 204, headers: CORS_HEADERS })
+      }
+
+      const url = new URL(request.url)
+      const path = url.pathname
+
+      // Purge endpoint
+      if (path === '/purge' && request.method === 'POST') {
+        return handlePurge(request, env, url)
+      }
+
+      // Only GET for cache endpoints
+      if (request.method !== 'GET') {
+        return json({ error: 'Method not allowed' }, 405)
+      }
+
+      if (path === '/categories') {
+        return handleCategories(request, env, ctx)
+      }
+
+      if (path === '/skills') {
+        return handleSkills(request, env, url, ctx)
+      }
+
+      return json({ error: 'Not found' }, 404)
+    } catch (e) {
+      return json({ error: e.message, stack: e.stack }, 500)
     }
-
-    const url = new URL(request.url)
-    const path = url.pathname
-
-    // Purge endpoint
-    if (path === '/purge' && request.method === 'POST') {
-      return handlePurge(request, env, url)
-    }
-
-    // Only GET for cache endpoints
-    if (request.method !== 'GET') {
-      return json({ error: 'Method not allowed' }, 405)
-    }
-
-    if (path === '/categories') {
-      return handleCategories(request, env, ctx)
-    }
-
-    if (path === '/skills') {
-      return handleSkills(request, env, url, ctx)
-    }
-
-    return json({ error: 'Not found' }, 404)
   },
 }
 
