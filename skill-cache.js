@@ -30,7 +30,7 @@ const CORS_HEADERS = {
 }
 
 export default {
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
     // CORS preflight
     if (request.method === 'OPTIONS') {
       return new Response(null, { status: 204, headers: CORS_HEADERS })
@@ -50,11 +50,11 @@ export default {
     }
 
     if (path === '/categories') {
-      return handleCategories(request, env)
+      return handleCategories(request, env, ctx)
     }
 
     if (path === '/skills') {
-      return handleSkills(request, env, url)
+      return handleSkills(request, env, url, ctx)
     }
 
     return json({ error: 'Not found' }, 404)
@@ -63,7 +63,7 @@ export default {
 
 // --- Handlers ---
 
-async function handleSkills(request, env, url) {
+async function handleSkills(request, env, url, ctx) {
   // Forward query params to Supabase REST API
   const supabaseUrl = `${env.SUPABASE_URL}/rest/v1/skill_catalog?${url.searchParams.toString()}`
   const cacheKey = new Request(supabaseUrl, { method: 'GET' })
@@ -112,13 +112,13 @@ async function handleSkills(request, env, url) {
       headers: { 'Content-Type': 'application/json', 'Cache-Control': `public, max-age=${CACHE_TTL}` },
     })
     if (contentRange) cacheResp.headers.set('content-range', contentRange)
-    request.ctx?.waitUntil?.(cache.put(cacheKey, cacheResp)) || cache.put(cacheKey, cacheResp)
+    ctx.waitUntil(cache.put(cacheKey, cacheResp))
   }
 
   return resp
 }
 
-async function handleCategories(request, env) {
+async function handleCategories(request, env, ctx) {
   const supabaseUrl = `${env.SUPABASE_URL}/rest/v1/skill_categories?select=*&order=sort_order`
   const cacheKey = new Request(supabaseUrl, { method: 'GET' })
 
@@ -176,7 +176,7 @@ async function handleCategories(request, env) {
     status: 200,
     headers: { 'Content-Type': 'application/json', 'Cache-Control': `public, max-age=${CACHE_TTL}` },
   })
-  cache.put(cacheKey, cacheResp)
+  ctx.waitUntil(cache.put(cacheKey, cacheResp))
 
   return resp
 }
