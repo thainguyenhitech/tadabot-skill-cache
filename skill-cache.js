@@ -41,6 +41,11 @@ export default {
       const url = new URL(request.url)
       const path = url.pathname
 
+      // Health check
+      if (path === '/health') {
+        return json({ ok: true, worker: 'tadabot-skill-cache' });
+      }
+
       // Purge endpoint
       if (path === '/purge' && request.method === 'POST') {
         return handlePurge(request, env, url)
