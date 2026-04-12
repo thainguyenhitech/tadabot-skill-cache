@@ -5,7 +5,11 @@ compatibility_date = "2024-01-01"
 [vars]
 SUPABASE_URL = "https://qcwbqjyqjnloapsczayz.supabase.co"
 
-# Secrets (set via Cloudflare Dashboard):
+[[kv_namespaces]]
+binding = "CACHE_META"
+id = "ff313e231dc34ea1bfa430ef97189314"
+
+# Secrets (set via Cloudflare Dashboard — persistent across deploys):
 #   SUPABASE_ANON_KEY = <anon key>
 #   PURGE_SECRET      = random auth token
 
