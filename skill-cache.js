@@ -1,28 +1,24 @@
 /**
  * Cloudflare Worker: Skill Catalog Cache Proxy
  *
- * Proxy Supabase skill_catalog queries, cache 1 ngày tại edge.
- * Purge cache khi admin update skill.
+ * Cache Supabase skill_catalog queries 1 ngày tại edge.
+ * Purge instant bằng cache version trong KV.
  *
  * Endpoints:
- *   GET  /skills?{supabase query params}  → cached Supabase response
+ *   GET  /skills?{supabase query params}  → cached response
  *   GET  /categories                       → cached categories + counts
- *   POST /purge?token=<SECRET>             → purge all skill cache
+ *   POST /purge?token=<SECRET>             → bump version, cache mới ngay
+ *   GET  /health                            → health check
  *
- * Setup:
- *   1. Cloudflare Dashboard → Worker Settings → Variables:
- *      - SUPABASE_URL: https://qcwbqjyqjnloapsczayz.supabase.co
- *      - SUPABASE_ANON_KEY: <anon key>
- *      - PURGE_SECRET: random string
- *
- *   2. Custom domain (optional):
- *      skills-api.tadabot.io → this worker
+ * Setup KV (1 lần):
+ *   Cloudflare Dashboard → Workers & Pages → KV → Create namespace: "tadabot-cache-meta"
+ *   Workers → tadabot-skill-cache → Settings → Bindings → KV → CACHE_META = tadabot-cache-meta
  *
  * Deploy: cd workers && npx wrangler deploy -c wrangler-skill-cache.toml
  */
 
-const CACHE_TTL = 86400 // 1 day
-const STALE_TTL = 172800 // 2 days (serve stale while revalidate)
+const CACHE_TTL = 86400 // 1 ngày
+const STALE_TTL = 172800
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'apikey, authorization, content-type',
@@ -30,10 +26,20 @@ const CORS_HEADERS = {
   'Access-Control-Expose-Headers': 'content-range',
 }
 
+async function getCacheVersion(env) {
+  if (!env.CACHE_META) return '0'
+  return (await env.CACHE_META.get('v')) || '0'
+}
+
+function makeCacheKey(urlStr, version) {
+  const u = new URL(urlStr)
+  u.searchParams.set('_v', version)
+  return new Request(u.toString(), { method: 'GET' })
+}
+
 export default {
   async fetch(request, env, ctx) {
     try {
-      // CORS preflight
       if (request.method === 'OPTIONS') {
         return new Response(null, { status: 204, headers: CORS_HEADERS })
       }
@@ -41,58 +47,46 @@ export default {
       const url = new URL(request.url)
       const path = url.pathname
 
-      // Health check
       if (path === '/health') {
-        return json({ ok: true, worker: 'tadabot-skill-cache' });
+        const v = await getCacheVersion(env)
+        return json({ ok: true, cache_version: v, kv_bound: !!env.CACHE_META })
       }
 
-      // Purge endpoint
       if (path === '/purge' && request.method === 'POST') {
-        return handlePurge(request, env, url)
+        return handlePurge(request, env)
       }
 
-      // Only GET for cache endpoints
-      if (request.method !== 'GET') {
-        return json({ error: 'Method not allowed' }, 405)
-      }
+      if (request.method !== 'GET') return json({ error: 'Method not allowed' }, 405)
 
-      if (path === '/categories') {
-        return handleCategories(request, env, ctx)
-      }
+      const version = await getCacheVersion(env)
 
-      if (path === '/skills') {
-        return handleSkills(request, env, url, ctx)
-      }
+      if (path === '/categories') return handleCategories(request, env, ctx, version)
+      if (path === '/skills') return handleSkills(request, env, url, ctx, version)
 
       return json({ error: 'Not found' }, 404)
     } catch (e) {
-      return json({ error: e.message, stack: e.stack }, 500)
+      return json({ error: e.message }, 500)
     }
   },
 }
 
 // --- Handlers ---
 
-async function handleSkills(request, env, url, ctx) {
-  // Forward query params to Supabase REST API
+async function handleSkills(request, env, url, ctx, version) {
   const supabaseUrl = `${env.SUPABASE_URL}/rest/v1/skill_catalog?${url.searchParams.toString()}`
-  // Cache key must be same zone — use worker's own URL
-  const cacheKey = new Request(url.toString(), { method: 'GET' })
-
-  // Try cache first
+  const cacheKey = makeCacheKey(url.toString(), version)
   const cache = caches.default
-  let response = await cache.match(cacheKey)
-  if (response) {
-    // Add cache hit header
-    const headers = new Headers(response.headers)
-    headers.set('x-cache', 'HIT')
-    headers.set('x-cache-ttl', CACHE_TTL.toString())
-    Object.entries(CORS_HEADERS).forEach(([k, v]) => headers.set(k, v))
-    return new Response(response.body, { status: response.status, headers })
+
+  const cached = await cache.match(cacheKey)
+  if (cached) {
+    const h = new Headers(cached.headers)
+    h.set('x-cache', 'HIT')
+    h.set('x-cache-version', version)
+    Object.entries(CORS_HEADERS).forEach(([k, v]) => h.set(k, v))
+    return new Response(cached.body, { status: cached.status, headers: h })
   }
 
-  // Cache miss — fetch from Supabase
-  const supabaseResp = await fetch(supabaseUrl, {
+  const resp = await fetch(supabaseUrl, {
     headers: {
       'apikey': env.SUPABASE_ANON_KEY,
       'Authorization': `Bearer ${env.SUPABASE_ANON_KEY}`,
@@ -101,50 +95,40 @@ async function handleSkills(request, env, url, ctx) {
     },
   })
 
-  // Build cacheable response
-  const body = await supabaseResp.text()
+  const body = await resp.text()
+  const contentRange = resp.headers.get('content-range')
   const headers = {
     'Content-Type': 'application/json',
     'Cache-Control': `public, max-age=${CACHE_TTL}, stale-while-revalidate=${STALE_TTL}`,
     'x-cache': 'MISS',
+    'x-cache-version': version,
     ...CORS_HEADERS,
   }
-
-  // Forward content-range header for count queries
-  const contentRange = supabaseResp.headers.get('content-range')
   if (contentRange) headers['content-range'] = contentRange
 
-  const resp = new Response(body, { status: supabaseResp.status, headers })
-
-  // Only cache successful responses
-  if (supabaseResp.ok) {
-    const cacheResp = new Response(body, {
-      status: supabaseResp.status,
-      headers: { 'Content-Type': 'application/json', 'Cache-Control': `public, max-age=${CACHE_TTL}` },
-    })
-    if (contentRange) cacheResp.headers.set('content-range', contentRange)
-    ctx.waitUntil(cache.put(cacheKey, cacheResp))
+  if (resp.ok) {
+    const cacheHeaders = { 'Content-Type': 'application/json', 'Cache-Control': `public, max-age=${CACHE_TTL}` }
+    if (contentRange) cacheHeaders['content-range'] = contentRange
+    ctx.waitUntil(cache.put(cacheKey, new Response(body, { status: resp.status, headers: cacheHeaders })))
   }
 
-  return resp
+  return new Response(body, { status: resp.status, headers })
 }
 
-async function handleCategories(request, env, ctx) {
-  const supabaseUrl = `${env.SUPABASE_URL}/rest/v1/skill_categories?select=*&order=sort_order`
-  // Cache key must be same zone — use worker's own URL
-  const cacheKey = new Request(request.url, { method: 'GET' })
-
+async function handleCategories(request, env, ctx, version) {
+  const cacheKey = makeCacheKey(request.url, version)
   const cache = caches.default
-  let response = await cache.match(cacheKey)
-  if (response) {
-    const headers = new Headers(response.headers)
-    headers.set('x-cache', 'HIT')
-    Object.entries(CORS_HEADERS).forEach(([k, v]) => headers.set(k, v))
-    return new Response(response.body, { status: response.status, headers })
+
+  const cached = await cache.match(cacheKey)
+  if (cached) {
+    const h = new Headers(cached.headers)
+    h.set('x-cache', 'HIT')
+    h.set('x-cache-version', version)
+    Object.entries(CORS_HEADERS).forEach(([k, v]) => h.set(k, v))
+    return new Response(cached.body, { status: cached.status, headers: h })
   }
 
-  // Fetch categories
-  const catResp = await fetch(supabaseUrl, {
+  const catResp = await fetch(`${env.SUPABASE_URL}/rest/v1/skill_categories?select=*&order=sort_order`, {
     headers: {
       'apikey': env.SUPABASE_ANON_KEY,
       'Authorization': `Bearer ${env.SUPABASE_ANON_KEY}`,
@@ -154,8 +138,7 @@ async function handleCategories(request, env, ctx) {
   const cats = await catResp.json()
   if (!catResp.ok) return json(cats, catResp.status)
 
-  // Count per category in parallel
-  const countPromises = cats.map(cat =>
+  const counts = await Promise.all(cats.map(cat =>
     fetch(`${env.SUPABASE_URL}/rest/v1/skill_catalog?select=id&category_id=eq.${cat.id}`, {
       method: 'HEAD',
       headers: {
@@ -165,75 +148,61 @@ async function handleCategories(request, env, ctx) {
       },
     }).then(r => {
       const range = r.headers.get('content-range') || ''
-      const total = parseInt(range.split('/')[1]) || 0
-      return { slug: cat.slug, count: total }
+      return { slug: cat.slug, count: parseInt(range.split('/')[1]) || 0 }
     })
-  )
-  const counts = await Promise.all(countPromises)
-  const countMap = {}
-  for (const { slug, count } of counts) countMap[slug] = count
+  ))
 
-  const body = JSON.stringify({ categories: cats, counts: countMap })
+  const countMap = Object.fromEntries(counts.map(c => [c.slug, c.count]))
+  const result = cats.map(cat => ({ ...cat, skill_count: countMap[cat.slug] || 0 }))
+  const body = JSON.stringify(result)
+
   const headers = {
     'Content-Type': 'application/json',
     'Cache-Control': `public, max-age=${CACHE_TTL}, stale-while-revalidate=${STALE_TTL}`,
     'x-cache': 'MISS',
+    'x-cache-version': version,
     ...CORS_HEADERS,
   }
 
-  const resp = new Response(body, { status: 200, headers })
-
-  // Cache it
-  const cacheResp = new Response(body, {
+  ctx.waitUntil(cache.put(cacheKey, new Response(body, {
     status: 200,
     headers: { 'Content-Type': 'application/json', 'Cache-Control': `public, max-age=${CACHE_TTL}` },
-  })
-  ctx.waitUntil(cache.put(cacheKey, cacheResp))
+  })))
 
-  return resp
+  return new Response(body, { status: 200, headers })
 }
 
-async function handlePurge(request, env, url) {
+async function handlePurge(request, env) {
+  const url = new URL(request.url)
   const token = url.searchParams.get('token') || request.headers.get('x-purge-token')
   if (!env.PURGE_SECRET || token !== env.PURGE_SECRET) {
     return json({ error: 'Unauthorized' }, 401)
   }
 
-  // Purge by deleting known cache keys
-  // For broad purge, use Cloudflare API
-  if (env.CF_API_TOKEN && env.CF_ZONE_ID) {
-    const resp = await fetch(
-      `https://api.cloudflare.com/client/v4/zones/${env.CF_ZONE_ID}/purge_cache`,
-      {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${env.CF_API_TOKEN}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ purge_everything: true }),
-      }
-    )
-    const data = await resp.json()
-    return json({ message: data.success ? 'Cache purged' : 'Purge failed', details: data })
+  if (!env.CACHE_META) {
+    return json({ error: 'KV binding CACHE_META chưa cấu hình. Vào Cloudflare Dashboard → Workers → Settings → Bindings → thêm KV CACHE_META' }, 500)
   }
 
-  return json({ message: 'No CF_API_TOKEN configured, cache will expire naturally' })
+  const old = (await env.CACHE_META.get('v')) || '0'
+  const next = String(parseInt(old) + 1)
+  await env.CACHE_META.put('v', next)
+
+  return json({ message: 'Cache purged', old_version: old, new_version: next })
 }
 
 // --- Helpers ---
-
-function extractPrefer(params) {
-  // Detect if client wants count
-  const select = params.get('select') || ''
-  if (params.has('offset') || params.has('limit')) {
-    return 'count=exact'
-  }
-  return ''
-}
 
 function json(data, status = 200) {
   return new Response(JSON.stringify(data), {
     status,
     headers: { 'Content-Type': 'application/json', ...CORS_HEADERS },
   })
+}
+
+function extractPrefer(params) {
+  const parts = []
+  if (params.has('count')) parts.push(`count=${params.get('count')}`)
+  const prefer = params.get('prefer')
+  if (prefer) parts.push(prefer)
+  return parts.join(', ') || 'return=representation'
 }

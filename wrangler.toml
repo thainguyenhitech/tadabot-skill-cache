@@ -8,8 +8,6 @@ SUPABASE_URL = "https://qcwbqjyqjnloapsczayz.supabase.co"
 # Secrets (set via Cloudflare Dashboard):
 #   SUPABASE_ANON_KEY = <anon key>
 #   PURGE_SECRET      = random auth token
-#   CF_API_TOKEN      = (optional)
-#   CF_ZONE_ID        = (optional)
 
 # Custom domain (add after deploy):
 # [[routes]]
