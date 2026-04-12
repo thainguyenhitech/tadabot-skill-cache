@@ -73,7 +73,11 @@ export default {
 // --- Handlers ---
 
 async function handleSkills(request, env, url, ctx, version) {
-  const supabaseUrl = `${env.SUPABASE_URL}/rest/v1/skill_catalog?${url.searchParams.toString()}`
+  // Strip non-PostgREST params before forwarding to Supabase
+  const forwardParams = new URLSearchParams(url.searchParams)
+  forwardParams.delete('count')   // handled via Prefer header
+  forwardParams.delete('prefer')  // handled via Prefer header
+  const supabaseUrl = `${env.SUPABASE_URL}/rest/v1/skill_catalog?${forwardParams.toString()}`
   const cacheKey = makeCacheKey(url.toString(), version)
   const cache = caches.default
 
