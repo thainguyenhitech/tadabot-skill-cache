@@ -99,7 +99,7 @@ async function handleSkills(request, env, url, ctx, version) {
   const contentRange = resp.headers.get('content-range')
   const headers = {
     'Content-Type': 'application/json',
-    'Cache-Control': `public, max-age=${CACHE_TTL}, stale-while-revalidate=${STALE_TTL}`,
+    'Cache-Control': `public, no-cache, s-maxage=${CACHE_TTL}, stale-while-revalidate=${STALE_TTL}`,
     'x-cache': 'MISS',
     'x-cache-version': version,
     ...CORS_HEADERS,
@@ -107,7 +107,7 @@ async function handleSkills(request, env, url, ctx, version) {
   if (contentRange) headers['content-range'] = contentRange
 
   if (resp.ok) {
-    const cacheHeaders = { 'Content-Type': 'application/json', 'Cache-Control': `public, max-age=${CACHE_TTL}` }
+    const cacheHeaders = { 'Content-Type': 'application/json', 'Cache-Control': `public, s-maxage=${CACHE_TTL}` }
     if (contentRange) cacheHeaders['content-range'] = contentRange
     ctx.waitUntil(cache.put(cacheKey, new Response(body, { status: resp.status, headers: cacheHeaders })))
   }
@@ -158,7 +158,7 @@ async function handleCategories(request, env, ctx, version) {
 
   const headers = {
     'Content-Type': 'application/json',
-    'Cache-Control': `public, max-age=${CACHE_TTL}, stale-while-revalidate=${STALE_TTL}`,
+    'Cache-Control': `public, no-cache, s-maxage=${CACHE_TTL}, stale-while-revalidate=${STALE_TTL}`,
     'x-cache': 'MISS',
     'x-cache-version': version,
     ...CORS_HEADERS,
@@ -166,7 +166,7 @@ async function handleCategories(request, env, ctx, version) {
 
   ctx.waitUntil(cache.put(cacheKey, new Response(body, {
     status: 200,
-    headers: { 'Content-Type': 'application/json', 'Cache-Control': `public, max-age=${CACHE_TTL}` },
+    headers: { 'Content-Type': 'application/json', 'Cache-Control': `public, s-maxage=${CACHE_TTL}` },
   })))
 
   return new Response(body, { status: 200, headers })
