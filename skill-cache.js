@@ -99,7 +99,7 @@ async function handleSkills(request, env, url, ctx, version) {
   const contentRange = resp.headers.get('content-range')
   const headers = {
     'Content-Type': 'application/json',
-    'Cache-Control': `public, no-cache, s-maxage=${CACHE_TTL}, stale-while-revalidate=${STALE_TTL}`,
+    'Cache-Control': `private, no-store`,
     'x-cache': 'MISS',
     'x-cache-version': version,
     ...CORS_HEADERS,
@@ -158,7 +158,7 @@ async function handleCategories(request, env, ctx, version) {
 
   const headers = {
     'Content-Type': 'application/json',
-    'Cache-Control': `public, no-cache, s-maxage=${CACHE_TTL}, stale-while-revalidate=${STALE_TTL}`,
+    'Cache-Control': `private, no-store`,
     'x-cache': 'MISS',
     'x-cache-version': version,
     ...CORS_HEADERS,
